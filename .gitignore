@@ -1,0 +1,28 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# CCS / TI build artifacts
+MCUSensorProject_sandbox/.settings/
+MCUSensorProject_sandbox/CPU1_FLASH/
+MCUSensorProject_sandbox/CPU1_RAM/
+MCUSensorProject_sandbox/Debug/
+MCUSensorProject_sandbox/Release/
+MCUSensorProject_sandbox/.launches/
+MCUSensorProject_sandbox/targetConfigs/
+MCUSensorProject_sandbox/device/
+
+# Same for the other CCS project
+clb_ex2_gpio_input_filter/.settings/
+clb_ex2_gpio_input_filter/Debug/
+clb_ex2_gpio_input_filter/Release/
+clb_ex2_gpio_input_filter/targetConfigs/
+clb_ex2_gpio_input_filter/device/
+
+# Data files
+data/
+
+# OS junk
+.DS_Store
+Thumbs.db
