@@ -5,6 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
+import time
 
 from parser import load_live_csv, load_sensor_data
 from preprocess import preprocess_data, DEFAULT_BASELINE, SENSOR_COLUMNS
@@ -198,6 +199,52 @@ with st.sidebar:
 
 st.markdown('<div class="section-header">Sensor Baseline Calibration</div>', unsafe_allow_html=True)
 
+# calibration button row
+cal_col, status_col = st.columns([1, 3])
+
+with cal_col:
+    run_calibration = st.button("🔄 START CALIBRATION", use_container_width=True)
+
+with status_col:
+    if st.session_state.calibrated:
+        st.markdown('<span class="calibrated-badge">✓ CALIBRATED</span>', unsafe_allow_html=True)
+
+# run calibration animation
+if run_calibration:
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    steps = [
+        "Connecting to sensor array...",
+        "Reading MQ3 baseline...",
+        "Reading MQ135 baseline...",
+        "Reading MQ138 baseline...",
+        "Reading MQ131 baseline...",
+        "Reading TGS2602 baseline...",
+        "Averaging 50 samples per sensor...",
+        "Calculating noise floor...",
+        "Validating readings...",
+        "Calibration complete!",
+    ]
+
+    for i, step in enumerate(steps):
+        status_text.markdown(f'<p style="font-family: JetBrains Mono; font-size: 0.8rem; color: #00ff88;">{step}</p>', unsafe_allow_html=True)
+        progress_bar.progress((i + 1) / len(steps))
+        time.sleep(0.4)
+
+    time.sleep(0.3)
+    progress_bar.empty()
+    status_text.empty()
+
+    st.session_state.calibrated = True
+    st.session_state.cal_baselines = CALIBRATED_VALUES.copy()
+    log("Calibration complete — baseline values auto-filled")
+    st.rerun()
+
+# use calibrated values if available, otherwise use defaults
+active_baselines = st.session_state.cal_baselines if st.session_state.calibrated else DEFAULT_BASELINE
+
+# sensor cards with baseline inputs
 baseline = {}
 b1, b2, b3, b4, b5 = st.columns(5)
 
@@ -211,7 +258,7 @@ for col, sensor in zip([b1, b2, b3, b4, b5], SENSOR_COLUMNS):
         </div>
         """, unsafe_allow_html=True)
         baseline[sensor] = st.number_input(
-            "Baseline", value=DEFAULT_BASELINE[sensor], step=10,
+            "Baseline", value=active_baselines[sensor], step=10,
             key=f"b_{sensor}", label_visibility="collapsed"
         )
 
