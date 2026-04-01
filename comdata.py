@@ -1,3 +1,4 @@
+import os
 import serial
 import csv
 import sys
@@ -19,8 +20,8 @@ UPDATE_INTERVAL_MS = 100       # how often the plot refreshes
 
 
 # ── CSV Log Setup ──────────────────────────────────────────────────
-timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-log_filename = f"sensor_log_{timestamp_str}.csv"
+os.makedirs("data/sensor_data", exist_ok=True)
+log_filename = "data/sensor_data/sensor_log.csv"
 log_file = open(log_filename, "w", newline="")
 log_writer = csv.writer(log_file)
 log_writer.writerow(["Timestamp"] + SENSOR_COLUMNS)
