@@ -1,0 +1,32 @@
+[
+   {
+      "directory" : "C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM",
+      "command"   : "clang++ -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox\" -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/device\" -I\"C:/ti/c2000/C2000Ware_6_00_01_00/driverlib/f2837xd/driverlib/\" -I\"C:/ti/ccs2041/ccs/tools/compiler/ti-cgt-c2000_22.6.3.LTS/include\" -DDEBUG -DCPU1 -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM/syscfg\" -DF2837xD=1 -xc",
+      "file"      : "C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM/syscfg/board.c"
+   },
+   {
+      "directory" : "C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM",
+      "command"   : "clang++ -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox\" -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/device\" -I\"C:/ti/c2000/C2000Ware_6_00_01_00/driverlib/f2837xd/driverlib/\" -I\"C:/ti/ccs2041/ccs/tools/compiler/ti-cgt-c2000_22.6.3.LTS/include\" -DDEBUG -DCPU1 -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM/syscfg\" -DF2837xD=1 -xc",
+      "file"      : "C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM/syscfg/c2000ware_libraries.c"
+   },
+   {
+      "directory" : "C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM",
+      "command"   : "clang++ -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox\" -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/device\" -I\"C:/ti/c2000/C2000Ware_6_00_01_00/driverlib/f2837xd/driverlib/\" -I\"C:/ti/ccs2041/ccs/tools/compiler/ti-cgt-c2000_22.6.3.LTS/include\" -DDEBUG -DCPU1 -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM/syscfg\" -DF2837xD=1",
+      "file"      : "C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/device/F2837xD_CodeStartBranch.asm"
+   },
+   {
+      "directory" : "C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM",
+      "command"   : "clang++ -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox\" -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/device\" -I\"C:/ti/c2000/C2000Ware_6_00_01_00/driverlib/f2837xd/driverlib/\" -I\"C:/ti/ccs2041/ccs/tools/compiler/ti-cgt-c2000_22.6.3.LTS/include\" -DDEBUG -DCPU1 -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM/syscfg\" -DF2837xD=1 -xc",
+      "file"      : "C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/device/device.c"
+   },
+   {
+      "directory" : "C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM",
+      "command"   : "clang++ -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox\" -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/device\" -I\"C:/ti/c2000/C2000Ware_6_00_01_00/driverlib/f2837xd/driverlib/\" -I\"C:/ti/ccs2041/ccs/tools/compiler/ti-cgt-c2000_22.6.3.LTS/include\" -DDEBUG -DCPU1 -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM/syscfg\" -DF2837xD=1 -xc",
+      "file"      : "C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/sensorReader.c"
+   },
+   {
+      "directory" : "C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM",
+      "command"   : "clang++ -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox\" -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/device\" -I\"C:/ti/c2000/C2000Ware_6_00_01_00/driverlib/f2837xd/driverlib/\" -I\"C:/ti/ccs2041/ccs/tools/compiler/ti-cgt-c2000_22.6.3.LTS/include\" -DDEBUG -DCPU1 -I\"C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/CPU1_RAM/syscfg\" -DF2837xD=1 -xc",
+      "file"      : "C:/Kailash/College/25-26/spring/ESET420/codings/workspace_ccstheia/MCUSensorProject_sandbox/main.c"
+   }
+]
