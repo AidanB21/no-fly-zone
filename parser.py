@@ -18,6 +18,11 @@ def load_sensor_data(filepath):
             df = pd.DataFrame(sensor_readings)
     return df
 
+def load_live_csv(filepath):
+    df = pd.read_csv(filepath, parse_dates=["Timestamp"])
+    return df
+
+
 if __name__ == "__main__":
     df = load_sensor_data(sensor_data_path)
     print(df.head()) #print first few rows to verify

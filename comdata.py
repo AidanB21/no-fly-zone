@@ -1,5 +1,5 @@
 import os
-import serial
+from serial import Serial, SerialException
 import csv
 import sys
 from datetime import datetime
@@ -30,9 +30,9 @@ print(f"Logging to: {log_filename}")
 
 # ── Serial Port ────────────────────────────────────────────────────
 try:
-    ser = serial.Serial(COM_PORT, BAUD_RATE, timeout=TIMEOUT)
+    ser = Serial(COM_PORT, BAUD_RATE, timeout=TIMEOUT)
     print(f"Connected to {COM_PORT} at {BAUD_RATE} baud")
-except serial.SerialException as e:
+except SerialException as e:
     print(f"Could not open {COM_PORT}: {e}")
     log_file.close()
     sys.exit(1)
@@ -70,7 +70,7 @@ def read_available_lines():
     while ser.in_waiting:
         try:
             raw = ser.readline().decode("utf-8", errors="replace")
-        except serial.SerialException:
+        except SerialException:
             break
 
         values = parse_line(raw)
