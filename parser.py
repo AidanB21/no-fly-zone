@@ -20,5 +20,5 @@ def load_sensor_data(filepath):
 
 if __name__ == "__main__":
     df = load_sensor_data(sensor_data_path)
-    print(df.head())
+    print(df.head()) #print first few rows to verify
     print(f"\nTotal readings: {len(df)}")
