@@ -10,11 +10,11 @@ A fly detection system using an array of gas sensors connected to a TI TMS320F28
 ## Setup
 
 1. Clone the repository:
-git clone https://github.com/AidanB21/no-fly-zone.git
+git clone https://github.com/AidanB21/no-fly-zone.git |
 cd no-fly-zone
 
 2. Create a virtual environment and activate it:
-py -m venv venv
+py -m venv venv |
 venv\Scripts\activate
 
 3. Install dependencies:
