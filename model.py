@@ -1,88 +1,75 @@
-import pandas as pd
+"""
+No-Fly-Zone ML Inference
+Loads fly_model.pkl and classifies live sensor readings.
+Called by the pipeline (gui.py / main.py) for each new sensor row.
+"""
 
-SENSOR_COLUMNS = ['MQ3', 'MQ135', 'MQ138', 'MQ131', 'TGS2602']
+import pickle
+import numpy as np
+from pathlib import Path
 
-DEFAULT_THRESHOLDS = {
-    'MQ3': 50,
-    'MQ135': 100,
-    'MQ138': 20,
-    'MQ131': 50,
-    'TGS2602': 100
-}
+BASE_DIR = Path(__file__).parent
+MODEL_PATH = BASE_DIR / "fly_model.pkl"
 
+# Load model once at import time
+_model_data = None
+_model = None
+_features = None
 
-def threshold_detect(df, thresholds=None, min_sensors=2):
-    if thresholds is None:
-        thresholds = DEFAULT_THRESHOLDS
+def _load_model():
+    global _model_data, _model, _features
+    if _model is not None:
+        return
+    if not MODEL_PATH.exists():
+        print(f"WARNING: {MODEL_PATH} not found. Run train_model.py first.")
+        return
+    with open(MODEL_PATH, "rb") as f:
+        _model_data = pickle.load(f)
+    _model = _model_data["model"]
+    _features = _model_data["features"]
+    print(f"Model loaded from {MODEL_PATH}")
 
-    detections = pd.DataFrame()
-    detections['sample'] = df.index
-
-    sensor_flags = pd.DataFrame()
-    for sensor in SENSOR_COLUMNS:
-        dist_col = f"{sensor}_dist"
-        if dist_col in df.columns:
-            sensor_flags[sensor] = df[dist_col] > thresholds[sensor]
-
-    detections['sensors_triggered'] = sensor_flags.sum(axis=1)
-    detections['fly_detected'] = detections['sensors_triggered'] >= min_sensors
-
-    detections['MQ3_value'] = df['MQ3'].values
-    detections['MQ131_value'] = df['MQ131'].values
-    detections['TGS2602_value'] = df['TGS2602'].values
-
-    return detections
+_load_model()
 
 
-def get_detection_summary(detections):
-    total_samples = len(detections)
-    fly_samples = detections['fly_detected'].sum()
-    fly_percentage = (fly_samples / total_samples) * 100 if total_samples > 0 else 0
+def predict(mq3, mq135, mq138, mq131, tgs2602):
+    """
+    Classify a single sensor reading.
+    Returns: (label, confidence)
+        label: 0 = clean, 1 = infected (fly detected)
+        confidence: probability of the predicted class (0.0 to 1.0)
+    """
+    if _model is None:
+        return 0, 0.0
 
-    if fly_samples == 0:
-        regions = []
-    else:
-        regions = []
-        in_event = False
-        start = 0
-        for i, row in detections.iterrows():
-            if row['fly_detected'] and not in_event:
-                start = row['sample']
-                in_event = True
-            elif not row['fly_detected'] and in_event:
-                end = detections.iloc[i - 1]['sample']
-                regions.append((start, end))
-                in_event = False
-        if in_event:
-            regions.append((start, detections.iloc[-1]['sample']))
+    # Build feature array with ratios
+    mq135_mq3 = mq135 / mq3 if mq3 > 0 else 0
+    tgs_mq3 = tgs2602 / mq3 if mq3 > 0 else 0
+    tgs_mq135 = tgs2602 / mq135 if mq135 > 0 else 0
 
-    summary = {
-        'total_samples': total_samples,
-        'fly_samples': fly_samples,
-        'fly_percentage': round(fly_percentage, 2),
-        'detection_regions': regions,
-        'num_events': len(regions)
-    }
-    return summary
+    X = np.array([[mq3, mq135, mq138, mq131, tgs2602,
+                   mq135_mq3, tgs_mq3, tgs_mq135]])
+
+    label = _model.predict(X)[0]
+    proba = _model.predict_proba(X)[0]
+    confidence = proba[label]
+
+    return int(label), float(confidence)
 
 
-def predict(df, thresholds=None, min_sensors=2):
-    detections = threshold_detect(df, thresholds, min_sensors)
-    summary = get_detection_summary(detections)
-    return detections, summary
+def predict_row(row_values):
+    """
+    Classify from a list/array of 5 raw sensor values.
+    Convenience wrapper for predict().
+    """
+    if len(row_values) < 5:
+        return 0, 0.0
+    return predict(row_values[0], row_values[1], row_values[2],
+                   row_values[3], row_values[4])
 
 
-if __name__ == "__main__":
-    from parser import load_sensor_data
-    from preprocess import preprocess_data
-
-    sensor_data_path = "data/sample_sensorData.txt"
-    raw_df = load_sensor_data(sensor_data_path)
-    processed_df = preprocess_data(raw_df)
-
-    detections, summary = predict(processed_df)
-
-    print(f"Total samples: {summary['total_samples']}")
-    print(f"Fly detected in: {summary['fly_samples']} samples ({summary['fly_percentage']}%)")
-    print(f"Number of events: {summary['num_events']}")
-    print(f"Detection regions: {summary['detection_regions']}")
+def get_status_text(label, confidence):
+    """Return a human-readable status string for the GUI."""
+    if label == 1:
+        return f"FLY DETECTED ({confidence:.0%} confidence)"
+    return f"Clean ({confidence:.0%} confidence)"

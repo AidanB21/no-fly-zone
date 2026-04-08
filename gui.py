@@ -5,18 +5,22 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
-import time
 
 from parser import load_live_csv, load_sensor_data
 from preprocess import preprocess_data, DEFAULT_BASELINE, SENSOR_COLUMNS
-from model import predict, DEFAULT_THRESHOLDS
+from model import predict_row, get_status_text
+from pathlib import Path
 
-LIVE_CSV = "data/sensor_data/sensor_log.csv"
+BASE_DIR = Path(__file__).resolve().parent
+LIVE_CSV = str(BASE_DIR / "data" / "sensor_data" / "sensor_log.csv")
 
 st.set_page_config(
     page_title="No-Fly-Zone | Pest Detection",
     layout="wide",
 )
+
+if 'paused' not in st.session_state:
+    st.session_state.paused = False
 
 st.markdown("""
 <style>
@@ -177,74 +181,27 @@ st.markdown('<p class="main-title">NO-FLY-ZONE</p>', unsafe_allow_html=True)
 st.markdown('<p class="sub-title">gas sensor array · ml detection pipeline · live</p>', unsafe_allow_html=True)
 st.markdown("<br>", unsafe_allow_html=True)
 
+# --- Sidebar ---
 with st.sidebar:
     st.markdown("### Detection Settings")
-
-    thresholds = {}
-    for sensor in SENSOR_COLUMNS:
-        thresholds[sensor] = st.number_input(
-            sensor, value=DEFAULT_THRESHOLDS[sensor], step=10, key=f"t_{sensor}"
-        )
-
-    st.markdown("---")
-    min_sensors = st.slider("Min sensors to trigger", 1, 5, 2)
     rolling_window = st.slider("Smoothing window", 1, 20, 5)
     st.markdown("---")
     live_mode = st.toggle("Live mode", value=True)
     st.markdown("---")
-    if "paused" not in st.session_state:
-        st.session_state.paused = False
-    if st.button("⏸ Pause" if not st.session_state.paused else "▶ Resume", use_container_width=True):
-        st.session_state.paused = not st.session_state.paused
+
+# --- Calibration state ---
+if "calibrated" not in st.session_state:
+    st.session_state.calibrated = False
+if "cal_baselines" not in st.session_state:
+    st.session_state.cal_baselines = DEFAULT_BASELINE.copy()
 
 st.markdown('<div class="section-header">Sensor Baseline Calibration</div>', unsafe_allow_html=True)
 
-# calibration button row
-cal_col, status_col = st.columns([1, 3])
+if st.session_state.calibrated:
+    st.markdown('<span class="calibrated-badge">✓ CALIBRATED</span>', unsafe_allow_html=True)
 
-with cal_col:
-    run_calibration = st.button("🔄 START CALIBRATION", use_container_width=True)
-
-with status_col:
-    if st.session_state.calibrated:
-        st.markdown('<span class="calibrated-badge">✓ CALIBRATED</span>', unsafe_allow_html=True)
-
-# run calibration animation
-if run_calibration:
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
-    steps = [
-        "Connecting to sensor array...",
-        "Reading MQ3 baseline...",
-        "Reading MQ135 baseline...",
-        "Reading MQ138 baseline...",
-        "Reading MQ131 baseline...",
-        "Reading TGS2602 baseline...",
-        "Averaging 50 samples per sensor...",
-        "Calculating noise floor...",
-        "Validating readings...",
-        "Calibration complete!",
-    ]
-
-    for i, step in enumerate(steps):
-        status_text.markdown(f'<p style="font-family: JetBrains Mono; font-size: 0.8rem; color: #00ff88;">{step}</p>', unsafe_allow_html=True)
-        progress_bar.progress((i + 1) / len(steps))
-        time.sleep(0.4)
-
-    time.sleep(0.3)
-    progress_bar.empty()
-    status_text.empty()
-
-    st.session_state.calibrated = True
-    st.session_state.cal_baselines = CALIBRATED_VALUES.copy()
-    log("Calibration complete — baseline values auto-filled")
-    st.rerun()
-
-# use calibrated values if available, otherwise use defaults
 active_baselines = st.session_state.cal_baselines if st.session_state.calibrated else DEFAULT_BASELINE
 
-# sensor cards with baseline inputs
 baseline = {}
 b1, b2, b3, b4, b5 = st.columns(5)
 
@@ -264,14 +221,54 @@ for col, sensor in zip([b1, b2, b3, b4, b5], SENSOR_COLUMNS):
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# load data and run pipeline
+# --- Load data and run ML pipeline ---
 try:
     if live_mode:
         raw_df = load_live_csv(LIVE_CSV)
     else:
         raw_df = load_sensor_data("data/sample_sensorData.txt")
     processed_df = preprocess_data(raw_df, baseline=baseline, window=rolling_window)
-    detections, summary = predict(processed_df, thresholds=thresholds, min_sensors=min_sensors)
+
+    # run ML model on each row
+    labels = []
+    confidences = []
+    for _, row in processed_df.iterrows():
+        vals = [row[s] for s in SENSOR_COLUMNS]
+        label, conf = predict_row(vals)
+        labels.append(label)
+        confidences.append(conf)
+
+    processed_df["fly_detected"] = labels
+    processed_df["confidence"] = confidences
+
+    # build summary
+    total_samples = len(processed_df)
+    fly_samples = sum(labels)
+    fly_percentage = round((fly_samples / total_samples) * 100, 2) if total_samples > 0 else 0
+
+    # find contiguous detection regions
+    regions = []
+    in_event = False
+    start = 0
+    for i, lbl in enumerate(labels):
+        if lbl == 1 and not in_event:
+            start = i
+            in_event = True
+        elif lbl == 0 and in_event:
+            regions.append((start, i - 1))
+            in_event = False
+    if in_event:
+        regions.append((start, len(labels) - 1))
+
+    summary = {
+        'total_samples': total_samples,
+        'fly_samples': fly_samples,
+        'fly_percentage': fly_percentage,
+        'detection_regions': regions,
+        'num_events': len(regions),
+        'avg_confidence': np.mean(confidences) if confidences else 0,
+    }
+
 except FileNotFoundError:
     st.info("Waiting for live data... Start comdata.py to begin streaming.")
     time.sleep(2)
@@ -291,6 +288,7 @@ sensor_colors = {
     'TGS2602': '#ef476f',
 }
 
+# --- Detection Results ---
 st.markdown('<div class="section-header">Detection Results</div>', unsafe_allow_html=True)
 
 c1, c2, c3, c4 = st.columns(4)
@@ -310,13 +308,15 @@ for col, val, label in zip(
 st.markdown("<br>", unsafe_allow_html=True)
 
 if summary['num_events'] > 0:
+    avg_conf = summary['avg_confidence']
     events_html = " ".join([f'<span class="event-tag">samples {r[0]}-{r[1]}</span>' for r in summary['detection_regions']])
-    st.markdown(f'<div class="alert-detected">FLY ACTIVITY DETECTED &nbsp;·&nbsp; {events_html}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="alert-detected">FLY ACTIVITY DETECTED ({avg_conf:.0%} avg confidence) &nbsp;·&nbsp; {events_html}</div>', unsafe_allow_html=True)
 else:
     st.markdown('<div class="alert-clear">ALL CLEAR — No fly activity detected</div>', unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+# --- Sensor Readings Chart ---
 fig = make_subplots(rows=1, cols=1)
 
 for sensor in SENSOR_COLUMNS:
@@ -356,18 +356,27 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True)
 
+# --- ML Confidence Chart (replaces distance-from-baseline) ---
 fig2 = go.Figure()
 
-for sensor in SENSOR_COLUMNS:
-    fig2.add_trace(go.Scatter(
-        y=df[f"{sensor}_dist"].values,
-        mode='lines',
-        name=sensor,
-        line=dict(color=sensor_colors[sensor], width=1.2),
-        hovertemplate=f'{sensor}: %{{y:.0f}}<extra></extra>',
-    ))
+fig2.add_trace(go.Scatter(
+    y=df["confidence"].values,
+    mode='lines',
+    name='Confidence',
+    line=dict(color='#00ff88', width=1.5),
+    fill='tozeroy',
+    fillcolor='rgba(0, 255, 136, 0.05)',
+    hovertemplate='Confidence: %{y:.2f}<extra></extra>',
+))
 
-fig2.add_hline(y=0, line_dash="dot", line_color="#4a5568", line_width=0.8)
+fig2.add_trace(go.Scatter(
+    y=df["fly_detected"].values,
+    mode='lines',
+    name='Fly Detected',
+    line=dict(color='#ff6b6b', width=1.2, dash='dot'),
+    yaxis='y2',
+    hovertemplate='Detected: %{y}<extra></extra>',
+))
 
 for region in summary['detection_regions']:
     fig2.add_vrect(
@@ -382,14 +391,15 @@ fig2.update_layout(
     plot_bgcolor="#0d1117",
     height=300,
     margin=dict(l=20, r=20, t=40, b=20),
-    title=dict(text="DISTANCE FROM BASELINE", font=dict(family="Outfit", size=14, color="#4a5568"), x=0),
+    title=dict(text="ML DETECTION CONFIDENCE", font=dict(family="Outfit", size=14, color="#4a5568"), x=0),
     legend=dict(
         orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
         font=dict(family="JetBrains Mono", size=11, color="#c9d1d9"),
         bgcolor="rgba(0,0,0,0)",
     ),
     xaxis=dict(title="Sample", gridcolor="#1e2d3d", zerolinecolor="#1e2d3d", title_font=dict(size=11, color="#4a5568")),
-    yaxis=dict(title="Delta from Baseline", gridcolor="#1e2d3d", zerolinecolor="#1e2d3d", title_font=dict(size=11, color="#4a5568")),
+    yaxis=dict(title="Confidence", gridcolor="#1e2d3d", zerolinecolor="#1e2d3d", title_font=dict(size=11, color="#4a5568"), range=[0, 1]),
+    yaxis2=dict(title="Detection", overlaying='y', side='right', gridcolor="#1e2d3d", range=[-0.1, 1.1]),
     hovermode="x unified",
 )
 
@@ -398,11 +408,11 @@ st.plotly_chart(fig2, use_container_width=True)
 with st.expander("View Raw Data Table"):
     st.dataframe(df[SENSOR_COLUMNS], use_container_width=True, height=300)
 
-# radar section
+# --- Radar section ---
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown('<div class="section-header">Radar</div>', unsafe_allow_html=True)
 
-RADAR_CSV = "data/sensor_data/radar_log.csv"
+RADAR_CSV = str(BASE_DIR / "data" / "sensor_data" / "radar_log.csv")
 
 try:
     radar_df = pd.read_csv(RADAR_CSV)
@@ -477,7 +487,6 @@ except FileNotFoundError:
     </div>
     """, unsafe_allow_html=True)
 
-# poll every 2 seconds unless paused
 if not st.session_state.paused:
     time.sleep(2)
     st.rerun()

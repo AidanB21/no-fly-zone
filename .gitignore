@@ -1,0 +1,19 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Live sensor logs (generated at runtime)
+data/sensor_data/
+
+# CCS build artifacts
+MCUSensorProject_sandbox/
+clb_ex2_gpio_input_filter/
+
+# IDE settings
+.settings/
+*.launch
+
+# OS junk
+.DS_Store
+Thumbs.db
