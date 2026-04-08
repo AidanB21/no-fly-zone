@@ -4,14 +4,15 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime
-import time
+from pathlib import Path
 
 from parser import load_live_csv, load_sensor_data
 from preprocess import preprocess_data, DEFAULT_BASELINE, SENSOR_COLUMNS
 from model import predict, DEFAULT_THRESHOLDS
 
-LIVE_CSV = "data/sensor_data/sensor_log.csv"
+BASE_DIR = Path(__file__).parent
+LIVE_CSV = BASE_DIR / "data/sensor_data/sensor_log.csv"
+RADAR_CSV = BASE_DIR / "data/sensor_data/radar_log.csv"
 
 st.set_page_config(
     page_title="No-Fly-Zone | Pest Detection",
@@ -197,6 +198,11 @@ with st.sidebar:
     if st.button("⏸ Pause" if not st.session_state.paused else "▶ Resume", use_container_width=True):
         st.session_state.paused = not st.session_state.paused
 
+if "calibrated" not in st.session_state:
+    st.session_state.calibrated = False
+if "cal_baselines" not in st.session_state:
+    st.session_state.cal_baselines = {}
+
 st.markdown('<div class="section-header">Sensor Baseline Calibration</div>', unsafe_allow_html=True)
 
 # calibration button row
@@ -237,8 +243,8 @@ if run_calibration:
     status_text.empty()
 
     st.session_state.calibrated = True
-    st.session_state.cal_baselines = CALIBRATED_VALUES.copy()
-    log("Calibration complete — baseline values auto-filled")
+    st.session_state.cal_baselines = DEFAULT_BASELINE.copy()
+    st.toast("Calibration complete — baseline values auto-filled")
     st.rerun()
 
 # use calibrated values if available, otherwise use defaults
@@ -269,7 +275,7 @@ try:
     if live_mode:
         raw_df = load_live_csv(LIVE_CSV)
     else:
-        raw_df = load_sensor_data("data/sample_sensorData.txt")
+        raw_df = load_sensor_data(BASE_DIR / "data/sample_sensorData.txt")
     processed_df = preprocess_data(raw_df, baseline=baseline, window=rolling_window)
     detections, summary = predict(processed_df, thresholds=thresholds, min_sensors=min_sensors)
 except FileNotFoundError:
@@ -401,8 +407,6 @@ with st.expander("View Raw Data Table"):
 # radar section
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown('<div class="section-header">Radar</div>', unsafe_allow_html=True)
-
-RADAR_CSV = "data/sensor_data/radar_log.csv"
 
 try:
     radar_df = pd.read_csv(RADAR_CSV)
