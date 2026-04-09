@@ -50,9 +50,12 @@ def predict(mq3, mq135, mq138, mq131, tgs2602):
     X = np.array([[mq3, mq135, mq138, mq131, tgs2602,
                    mq135_mq3, tgs_mq3, tgs_mq135]])
 
-    label = _model.predict(X)[0]
     proba = _model.predict_proba(X)[0]
-    confidence = proba[label]
+    fly_prob = proba[1]
+
+    # Lower threshold (0.3) so borderline VOC spikes still trigger detection
+    label = 1 if fly_prob >= 0.3 else 0
+    confidence = fly_prob if label == 1 else proba[0]
 
     return int(label), float(confidence)
 
@@ -66,6 +69,15 @@ def predict_row(row_values):
         return 0, 0.0
     return predict(row_values[0], row_values[1], row_values[2],
                    row_values[3], row_values[4])
+
+
+def reload_model():
+    """Re-read fly_model.pkl from disk (call after retraining)."""
+    global _model, _features, _model_data
+    _model = None
+    _features = None
+    _model_data = None
+    _load_model()
 
 
 def get_status_text(label, confidence):

@@ -58,21 +58,27 @@ def build_dataset():
 
 def add_features(df):
     df = df.copy()
+    # Ratio features
     df["MQ135_MQ3"] = df["MQ135"] / df["MQ3"]
     df["TGS_MQ3"] = df["TGS2602"] / df["MQ3"]
     df["TGS_MQ135"] = df["TGS2602"] / df["MQ135"]
+    # Spike features — capture when any single sensor goes extreme
+    df["sensor_max"] = df[SENSORS].max(axis=1)
+    df["sensor_sum"] = df[SENSORS].sum(axis=1)
+    df["tgs_share"] = df["TGS2602"] / df["sensor_sum"]  # TGS2602 dominance
     return df
 
 
 def train_and_evaluate(df):
-    feat_cols = SENSORS + ["MQ135_MQ3", "TGS_MQ3", "TGS_MQ135"]
+    feat_cols = SENSORS + ["MQ135_MQ3", "TGS_MQ3", "TGS_MQ135",
+                           "sensor_max", "sensor_sum", "tgs_share"]
     X = df[feat_cols].values
     y = df["label"].values
     groups = df["source"].astype("category").cat.codes.values
 
     rf = RandomForestClassifier(
         n_estimators=200,
-        class_weight="balanced",
+        class_weight={0: 1, 1: 4},  # penalise missed detections 4x harder
         random_state=42,
     )
 

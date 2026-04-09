@@ -1,4 +1,5 @@
 import time
+import subprocess
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -19,8 +20,19 @@ st.set_page_config(
     layout="wide",
 )
 
+# --- Session state ---
 if 'paused' not in st.session_state:
     st.session_state.paused = False
+if 'cal_start_time' not in st.session_state:
+    st.session_state.cal_start_time = None
+if 'show_test' not in st.session_state:
+    st.session_state.show_test = (BASE_DIR / "fly_model.pkl").exists()
+if 'testing' not in st.session_state:
+    st.session_state.testing = False
+if 'test_start_time' not in st.session_state:
+    st.session_state.test_start_time = None
+if 'test_result' not in st.session_state:
+    st.session_state.test_result = None
 
 st.markdown("""
 <style>
@@ -187,21 +199,82 @@ with st.sidebar:
     rolling_window = st.slider("Smoothing window", 1, 20, 5)
     st.markdown("---")
     live_mode = st.toggle("Live mode", value=True)
-    st.markdown("---")
 
-# --- Calibration state ---
-if "calibrated" not in st.session_state:
-    st.session_state.calibrated = False
-if "cal_baselines" not in st.session_state:
-    st.session_state.cal_baselines = DEFAULT_BASELINE.copy()
+# --- Calibrate ---
+if st.session_state.cal_start_time is not None:
+    elapsed = time.time() - st.session_state.cal_start_time
+    if elapsed < 30:
+        st.write(f"Calibrating... {int(elapsed)}s / 30s")
+        time.sleep(1)
+        st.rerun()
+    else:
+        # Save sensor data from calibration window
+        try:
+            cal_df = load_live_csv(LIVE_CSV)
+            cal_start_dt = datetime.fromtimestamp(st.session_state.cal_start_time)
+            cal_rows = cal_df[cal_df["Timestamp"] >= cal_start_dt]
+            if cal_rows.empty:
+                cal_rows = cal_df.tail(60)
+            cal_dir = BASE_DIR / "data" / "training" / "clean_air"
+            cal_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            with open(cal_dir / f"calibration_{ts}.txt", "w") as f:
+                for _, row in cal_rows.iterrows():
+                    f.write(",".join(str(int(row[s])) for s in SENSOR_COLUMNS) + "\n")
+            subprocess.Popen(["python", str(BASE_DIR / "train_model.py")], cwd=str(BASE_DIR))
+        except Exception as e:
+            st.error(f"Calibration save error: {e}")
+        st.session_state.cal_start_time = None
+        st.session_state.show_test = True
+        st.success("Calibration complete! Model training in background.")
+else:
+    if st.button("Calibrate", type="primary"):
+        st.session_state.cal_start_time = time.time()
+        st.session_state.test_result = None
+        st.rerun()
 
-st.markdown('<div class="section-header">Sensor Baseline Calibration</div>', unsafe_allow_html=True)
+# --- Test for Flies ---
+if st.session_state.show_test and st.session_state.cal_start_time is None:
+    if st.session_state.test_start_time is not None:
+        elapsed = time.time() - st.session_state.test_start_time
+        if elapsed < 60:
+            st.write(f"Testing for flies... {int(elapsed)}s / 60s")
+            time.sleep(1)
+            st.rerun()
+        else:
+            # Run model on data from the test window
+            try:
+                test_df = load_live_csv(LIVE_CSV)
+                test_start_dt = datetime.fromtimestamp(st.session_state.test_start_time)
+                test_rows = test_df[test_df["Timestamp"] >= test_start_dt]
+                if test_rows.empty:
+                    test_rows = test_df.tail(60)
+                labels = [predict_row([row[s] for s in SENSOR_COLUMNS])[0] for _, row in test_rows.iterrows()]
+                fly_count = sum(labels)
+                st.session_state.test_result = {
+                    "detected": fly_count > 0,
+                    "fly_pct": round(fly_count / len(labels) * 100, 1),
+                }
+            except Exception as e:
+                st.error(f"Test error: {e}")
+            st.session_state.test_start_time = None
+    else:
+        if st.button("Test for Flies", type="primary"):
+            st.session_state.test_start_time = time.time()
+            st.session_state.test_result = None
+            st.rerun()
 
-if st.session_state.calibrated:
-    st.markdown('<span class="calibrated-badge">✓ CALIBRATED</span>', unsafe_allow_html=True)
+# --- Test result ---
+if st.session_state.test_result is not None:
+    r = st.session_state.test_result
+    if r["detected"]:
+        st.markdown(f'<div class="alert-detected">FLY ACTIVITY DETECTED — {r["fly_pct"]}% of samples positive</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="alert-clear">ALL CLEAR — No fly activity detected</div>', unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
 
-active_baselines = st.session_state.cal_baselines if st.session_state.calibrated else DEFAULT_BASELINE
-
+# --- Baseline inputs ---
+active_baselines = DEFAULT_BASELINE
 baseline = {}
 b1, b2, b3, b4, b5 = st.columns(5)
 
@@ -229,7 +302,6 @@ try:
         raw_df = load_sensor_data("data/sample_sensorData.txt")
     processed_df = preprocess_data(raw_df, baseline=baseline, window=rolling_window)
 
-    # run ML model on each row
     labels = []
     confidences = []
     for _, row in processed_df.iterrows():
@@ -241,12 +313,10 @@ try:
     processed_df["fly_detected"] = labels
     processed_df["confidence"] = confidences
 
-    # build summary
     total_samples = len(processed_df)
     fly_samples = sum(labels)
     fly_percentage = round((fly_samples / total_samples) * 100, 2) if total_samples > 0 else 0
 
-    # find contiguous detection regions
     regions = []
     in_event = False
     start = 0
@@ -288,33 +358,34 @@ sensor_colors = {
     'TGS2602': '#ef476f',
 }
 
-# --- Detection Results ---
-st.markdown('<div class="section-header">Detection Results</div>', unsafe_allow_html=True)
+# --- Detection Results (only when testing) ---
+if st.session_state.testing:
+    st.markdown('<div class="section-header">Detection Results</div>', unsafe_allow_html=True)
 
-c1, c2, c3, c4 = st.columns(4)
-for col, val, label in zip(
-    [c1, c2, c3, c4],
-    [summary['total_samples'], summary['fly_samples'], f"{summary['fly_percentage']}%", summary['num_events']],
-    ["SAMPLES", "DETECTIONS", "FLY %", "EVENTS"]
-):
-    with col:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-value">{val}</div>
-            <div class="metric-label">{label}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    for col, val, label in zip(
+        [c1, c2, c3, c4],
+        [summary['total_samples'], summary['fly_samples'], f"{summary['fly_percentage']}%", summary['num_events']],
+        ["SAMPLES", "DETECTIONS", "FLY %", "EVENTS"]
+    ):
+        with col:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-value">{val}</div>
+                <div class="metric-label">{label}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
 
-if summary['num_events'] > 0:
-    avg_conf = summary['avg_confidence']
-    events_html = " ".join([f'<span class="event-tag">samples {r[0]}-{r[1]}</span>' for r in summary['detection_regions']])
-    st.markdown(f'<div class="alert-detected">FLY ACTIVITY DETECTED ({avg_conf:.0%} avg confidence) &nbsp;·&nbsp; {events_html}</div>', unsafe_allow_html=True)
-else:
-    st.markdown('<div class="alert-clear">ALL CLEAR — No fly activity detected</div>', unsafe_allow_html=True)
+    if summary['num_events'] > 0:
+        avg_conf = summary['avg_confidence']
+        events_html = " ".join([f'<span class="event-tag">samples {r[0]}-{r[1]}</span>' for r in summary['detection_regions']])
+        st.markdown(f'<div class="alert-detected">FLY ACTIVITY DETECTED ({avg_conf:.0%} avg confidence) &nbsp;·&nbsp; {events_html}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="alert-clear">ALL CLEAR — No fly activity detected</div>', unsafe_allow_html=True)
 
-st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
 
 # --- Sensor Readings Chart ---
 fig = make_subplots(rows=1, cols=1)
@@ -356,7 +427,7 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True)
 
-# --- ML Confidence Chart (replaces distance-from-baseline) ---
+# --- ML Confidence Chart ---
 fig2 = go.Figure()
 
 fig2.add_trace(go.Scatter(
