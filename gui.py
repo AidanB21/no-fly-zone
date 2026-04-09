@@ -195,6 +195,11 @@ if "calibrated" not in st.session_state:
 if "cal_baselines" not in st.session_state:
     st.session_state.cal_baselines = DEFAULT_BASELINE.copy()
 
+if "calibrated" not in st.session_state:
+    st.session_state.calibrated = False
+if "cal_baselines" not in st.session_state:
+    st.session_state.cal_baselines = {}
+
 st.markdown('<div class="section-header">Sensor Baseline Calibration</div>', unsafe_allow_html=True)
 
 if st.session_state.calibrated:
@@ -226,7 +231,7 @@ try:
     if live_mode:
         raw_df = load_live_csv(LIVE_CSV)
     else:
-        raw_df = load_sensor_data("data/sample_sensorData.txt")
+        raw_df = load_sensor_data(BASE_DIR / "data/sample_sensorData.txt")
     processed_df = preprocess_data(raw_df, baseline=baseline, window=rolling_window)
 
     # run ML model on each row
