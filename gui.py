@@ -9,7 +9,7 @@ from datetime import datetime
 
 from parser import load_live_csv, load_sensor_data
 from preprocess import preprocess_data, DEFAULT_BASELINE, SENSOR_COLUMNS
-from model import predict_row, get_status_text
+from model import predict_row, predict_batch, get_status_text
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -205,13 +205,18 @@ if st.session_state.cal_start_time is not None:
     elapsed = time.time() - st.session_state.cal_start_time
     if elapsed < 30:
         st.write(f"Calibrating... {int(elapsed)}s / 30s")
-        time.sleep(1)
-        st.rerun()
+        # Do NOT sleep+rerun here — that aborts the rest of the script and
+        # freezes the radar chart. The page's own 2-second rerun loop at the
+        # bottom will drive the countdown refresh without blocking rendering.
     else:
-        # Save sensor data from calibration window
+        # Capture the start time BEFORE clearing it from session state
+        cal_start_ts   = st.session_state.cal_start_time
+        cal_start_dt   = datetime.fromtimestamp(cal_start_ts)
+        cal_since_str  = cal_start_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Save gas sensor data from calibration window
         try:
-            cal_df = load_live_csv(LIVE_CSV)
-            cal_start_dt = datetime.fromtimestamp(st.session_state.cal_start_time)
+            cal_df   = load_live_csv(LIVE_CSV)
             cal_rows = cal_df[cal_df["Timestamp"] >= cal_start_dt]
             if cal_rows.empty:
                 cal_rows = cal_df.tail(60)
@@ -224,9 +229,27 @@ if st.session_state.cal_start_time is not None:
             subprocess.Popen(["python", str(BASE_DIR / "train_model.py")], cwd=str(BASE_DIR))
         except Exception as e:
             st.error(f"Calibration save error: {e}")
+
+        # Snapshot the radar calibration baseline — just save the
+        # micro_doppler values from the 30s calibration window into a
+        # separate CSV. The test phase will compare against this directly.
+        try:
+            radar_csv = BASE_DIR / "data" / "sensor_data" / "radar_log.csv"
+            radar_baseline_csv = BASE_DIR / "data" / "sensor_data" / "radar_baseline.csv"
+            if radar_csv.exists():
+                r_df = pd.read_csv(radar_csv)
+                if not r_df.empty and "Timestamp" in r_df.columns:
+                    r_df["Timestamp"] = pd.to_datetime(r_df["Timestamp"], errors="coerce")
+                    cal_window = r_df[r_df["Timestamp"] >= cal_start_dt]
+                    if cal_window.empty:
+                        cal_window = r_df.tail(60)
+                    cal_window.to_csv(radar_baseline_csv, index=False)
+        except Exception as e:
+            st.warning(f"Radar baseline snapshot failed: {e}")
+
         st.session_state.cal_start_time = None
         st.session_state.show_test = True
-        st.success("Calibration complete! Model training in background.")
+        st.success("Calibration complete! Gas + radar models training in background.")
 else:
     if st.button("Calibrate", type="primary"):
         st.session_state.cal_start_time = time.time()
@@ -239,10 +262,10 @@ if st.session_state.show_test and st.session_state.cal_start_time is None:
         elapsed = time.time() - st.session_state.test_start_time
         if elapsed < 60:
             st.write(f"Testing for flies... {int(elapsed)}s / 60s")
-            time.sleep(1)
-            st.rerun()
+            # Same as calibration — don't sleep+rerun here or the radar
+            # chart freezes. The bottom rerun loop drives the refresh.
         else:
-            # Run model on data from the test window
+            # Run gas sensor model on the test window
             try:
                 test_df = load_live_csv(LIVE_CSV)
                 test_start_dt = datetime.fromtimestamp(st.session_state.test_start_time)
@@ -251,9 +274,41 @@ if st.session_state.show_test and st.session_state.cal_start_time is None:
                     test_rows = test_df.tail(60)
                 labels = [predict_row([row[s] for s in SENSOR_COLUMNS])[0] for _, row in test_rows.iterrows()]
                 fly_count = sum(labels)
+
+                # Radar motion check — compare AVERAGE absolute micro-doppler
+                # of the calibration baseline CSV vs the test window. If the
+                # test average exceeds the baseline average by DOPPLER_THRESHOLD
+                # (m/s), motion is flagged.
+                DOPPLER_THRESHOLD = 0.015  # m/s — small delta above baseline noise
+                radar_detected    = False
+                radar_available   = False
+                baseline_avg      = 0.0
+                test_avg          = 0.0
+                try:
+                    radar_baseline_csv = BASE_DIR / "data" / "sensor_data" / "radar_baseline.csv"
+                    radar_live_csv     = BASE_DIR / "data" / "sensor_data" / "radar_log.csv"
+                    if radar_baseline_csv.exists() and radar_live_csv.exists():
+                        baseline_df = pd.read_csv(radar_baseline_csv)
+                        live_df     = pd.read_csv(radar_live_csv)
+                        if not baseline_df.empty and not live_df.empty:
+                            baseline_avg = float(baseline_df["micro_doppler"].abs().mean())
+                            live_df["Timestamp"] = pd.to_datetime(live_df["Timestamp"], errors="coerce")
+                            test_window = live_df[live_df["Timestamp"] >= test_start_dt]
+                            if test_window.empty:
+                                test_window = live_df.tail(60)
+                            test_avg = float(test_window["micro_doppler"].abs().mean())
+                            radar_detected  = (test_avg - baseline_avg) > DOPPLER_THRESHOLD
+                            radar_available = True
+                except Exception:
+                    pass
+
                 st.session_state.test_result = {
-                    "detected": fly_count > 0,
-                    "fly_pct": round(fly_count / len(labels) * 100, 1),
+                    "detected":         fly_count > 0,
+                    "fly_pct":          round(fly_count / len(labels) * 100, 1),
+                    "radar_detected":   bool(radar_detected),
+                    "radar_available":  radar_available,
+                    "baseline_avg":     round(baseline_avg, 4),
+                    "test_avg":         round(test_avg, 4),
                 }
             except Exception as e:
                 st.error(f"Test error: {e}")
@@ -264,13 +319,76 @@ if st.session_state.show_test and st.session_state.cal_start_time is None:
             st.session_state.test_result = None
             st.rerun()
 
-# --- Test result ---
+# --- Live radar motion check (runs every refresh, independent of test button) ---
+# Compares the AVERAGE absolute micro-doppler of the latest radar frames
+# against the calibration baseline. Any delta above DOPPLER_LIVE_THRESHOLD
+# (m/s) immediately flags motion.
+LIVE_RADAR_WINDOW    = 20      # frames — most recent radar samples to average
+DOPPLER_LIVE_THRESHOLD = 0.005 # m/s — any movement above baseline noise trips it
+
+live_radar_motion   = False
+live_radar_available = False
+live_base_avg       = 0.0
+live_test_avg       = 0.0
+try:
+    radar_baseline_csv = BASE_DIR / "data" / "sensor_data" / "radar_baseline.csv"
+    radar_live_csv     = BASE_DIR / "data" / "sensor_data" / "radar_log.csv"
+    if radar_baseline_csv.exists() and radar_live_csv.exists():
+        _bdf = pd.read_csv(radar_baseline_csv)
+        _ldf = pd.read_csv(radar_live_csv)
+        if not _bdf.empty and not _ldf.empty:
+            live_base_avg = float(_bdf["micro_doppler"].abs().mean())
+            recent        = _ldf.tail(LIVE_RADAR_WINDOW)
+            live_test_avg = float(recent["micro_doppler"].abs().mean())
+            live_radar_motion    = (live_test_avg - live_base_avg) > DOPPLER_LIVE_THRESHOLD
+            live_radar_available = True
+except Exception:
+    pass
+
+# --- Test result / pre-calibration default ---
+if st.session_state.cal_start_time is not None:
+    pass  # silent during calibration — the countdown timer is already shown above
+elif st.session_state.test_result is None:
+    # Before the user has hit "Test", use the LIVE radar check as the banner:
+    if live_radar_available and live_radar_motion:
+        st.markdown(
+            f'<div class="alert-detected">MOVEMENT DETECTED (radar) — '
+            f'live µ-doppler {live_test_avg:.3f} m/s vs baseline {live_base_avg:.3f} m/s</div>',
+            unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="alert-clear">No flies detected</div>', unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
 if st.session_state.test_result is not None:
     r = st.session_state.test_result
-    if r["detected"]:
-        st.markdown(f'<div class="alert-detected">FLY ACTIVITY DETECTED — {r["fly_pct"]}% of samples positive</div>', unsafe_allow_html=True)
+    gas_detected    = r["detected"]
+    # Prefer the live radar reading (fresh every refresh) over the snapshot
+    # captured at test time, so the banner flips the instant you wave.
+    radar_motion    = live_radar_motion if live_radar_available else r.get("radar_detected", False)
+    radar_available = live_radar_available or r.get("radar_available", False)
+    base_avg        = live_base_avg if live_radar_available else r.get("baseline_avg", 0.0)
+    test_avg        = live_test_avg if live_radar_available else r.get("test_avg", 0.0)
+
+    # Both sensors agree on presence = higher confidence result
+    if gas_detected and radar_motion:
+        st.markdown(
+            f'<div class="alert-detected">FLY ACTIVITY DETECTED — '
+            f'Gas: {r["fly_pct"]}% positive · Radar: live µ-doppler {test_avg:.3f} m/s '
+            f'vs baseline {base_avg:.3f} m/s</div>',
+            unsafe_allow_html=True)
+    elif gas_detected and not radar_motion:
+        st.markdown(
+            f'<div class="alert-detected">FLY ACTIVITY DETECTED (gas sensors) — '
+            f'{r["fly_pct"]}% of samples positive</div>',
+            unsafe_allow_html=True)
+    elif not gas_detected and radar_motion and radar_available:
+        st.markdown(
+            f'<div class="alert-detected">MOVEMENT DETECTED (radar) — '
+            f'live µ-doppler {test_avg:.3f} m/s vs baseline {base_avg:.3f} m/s</div>',
+            unsafe_allow_html=True)
     else:
-        st.markdown('<div class="alert-clear">ALL CLEAR — No fly activity detected</div>', unsafe_allow_html=True)
+        st.markdown('<div class="alert-clear">ALL CLEAR — No fly activity detected</div>',
+                    unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
 # --- Baseline inputs ---
@@ -295,20 +413,20 @@ for col, sensor in zip([b1, b2, b3, b4, b5], SENSOR_COLUMNS):
 st.markdown("<br>", unsafe_allow_html=True)
 
 # --- Load data and run ML pipeline ---
+DISPLAY_ROWS = 300   # cap for chart rendering and ML — no need to process full history
+
 try:
     if live_mode:
         raw_df = load_live_csv(LIVE_CSV)
     else:
         raw_df = load_sensor_data("data/sample_sensorData.txt")
+
+    # Only keep the most recent rows — older data adds no value to the live view
+    raw_df = raw_df.tail(DISPLAY_ROWS)
     processed_df = preprocess_data(raw_df, baseline=baseline, window=rolling_window)
 
-    labels = []
-    confidences = []
-    for _, row in processed_df.iterrows():
-        vals = [row[s] for s in SENSOR_COLUMNS]
-        label, conf = predict_row(vals)
-        labels.append(label)
-        confidences.append(conf)
+    # Batch predict entire DataFrame in one call — much faster than iterrows()
+    labels, confidences = predict_batch(processed_df, SENSOR_COLUMNS)
 
     processed_df["fly_detected"] = labels
     processed_df["confidence"] = confidences
@@ -317,23 +435,32 @@ try:
     fly_samples = sum(labels)
     fly_percentage = round((fly_samples / total_samples) * 100, 2) if total_samples > 0 else 0
 
-    regions = []
-    in_event = False
-    start = 0
-    for i, lbl in enumerate(labels):
-        if lbl == 1 and not in_event:
-            start = i
-            in_event = True
-        elif lbl == 0 and in_event:
-            regions.append((start, i - 1))
-            in_event = False
-    if in_event:
-        regions.append((start, len(labels) - 1))
+    # Only compute and show detection regions if a test has been explicitly run.
+    # Before calibration / during calibration, suppress all detection output
+    # so the chart doesn't show red highlights and false "DETECTED" states.
+    test_has_run = st.session_state.test_result is not None
+    is_calibrating = st.session_state.cal_start_time is not None
+
+    if test_has_run and not is_calibrating:
+        regions = []
+        in_event = False
+        start = 0
+        for i, lbl in enumerate(labels):
+            if lbl == 1 and not in_event:
+                start = i
+                in_event = True
+            elif lbl == 0 and in_event:
+                regions.append((start, i - 1))
+                in_event = False
+        if in_event:
+            regions.append((start, len(labels) - 1))
+    else:
+        regions = []   # suppress highlights until a test is explicitly run
 
     summary = {
         'total_samples': total_samples,
-        'fly_samples': fly_samples,
-        'fly_percentage': fly_percentage,
+        'fly_samples': fly_samples if test_has_run else 0,
+        'fly_percentage': fly_percentage if test_has_run else 0,
         'detection_regions': regions,
         'num_events': len(regions),
         'avg_confidence': np.mean(confidences) if confidences else 0,
@@ -488,19 +615,25 @@ RADAR_CSV = str(BASE_DIR / "data" / "sensor_data" / "radar_log.csv")
 try:
     radar_df = pd.read_csv(RADAR_CSV)
 
-    r1, r2, r3 = st.columns(3)
+    if radar_df.empty:
+        raise FileNotFoundError("Radar log is empty — no data yet.")
+
+    # --- Latest-frame metrics ---
+    last = radar_df.iloc[-1]
+    dist_val      = float(last["distance_m"])
+    doppler_val   = float(last["micro_doppler"])
+    num_obj_val   = int(last["num_objects"])
+    peak_vel_val  = float(last["peak_velocity"])
+
+    r1, r2, r3, r4 = st.columns(4)
     with r1:
-        presence_val = int(radar_df["presence"].iloc[-1])
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-value" style="color: {'#ff6b6b' if presence_val else '#00ff88'}">
-                {'DETECTED' if presence_val else 'CLEAR'}
-            </div>
-            <div class="metric-label">Presence</div>
+            <div class="metric-value">{num_obj_val}</div>
+            <div class="metric-label">Objects Detected</div>
         </div>
         """, unsafe_allow_html=True)
     with r2:
-        dist_val = radar_df["distance_m"].iloc[-1]
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-value">{dist_val:.2f}m</div>
@@ -508,56 +641,110 @@ try:
         </div>
         """, unsafe_allow_html=True)
     with r3:
-        doppler_val = radar_df["micro_doppler"].iloc[-1]
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-value">{doppler_val:.3f}</div>
-            <div class="metric-label">Micro-Doppler</div>
+            <div class="metric-value">{doppler_val:+.3f}</div>
+            <div class="metric-label">Micro-Doppler (m/s)</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with r4:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-value">{peak_vel_val:.3f}</div>
+            <div class="metric-label">Peak Velocity (m/s)</div>
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    fig_radar = go.Figure()
-    fig_radar.add_trace(go.Scatter(
-        y=radar_df["distance_m"].values,
-        mode='lines',
-        name='Distance (m)',
-        line=dict(color='#00b4d8', width=1.5),
-    ))
-    fig_radar.add_trace(go.Scatter(
-        y=radar_df["micro_doppler"].values,
-        mode='lines',
-        name='Micro-Doppler',
-        line=dict(color='#ffd166', width=1.2),
-        yaxis='y2',
-    ))
-    fig_radar.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#0a0e17",
-        plot_bgcolor="#0d1117",
-        height=280,
-        margin=dict(l=20, r=20, t=40, b=20),
-        title=dict(text="RADAR — DISTANCE & MICRO-DOPPLER", font=dict(family="Outfit", size=14, color="#4a5568"), x=0),
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
-            font=dict(family="JetBrains Mono", size=11, color="#c9d1d9"),
-            bgcolor="rgba(0,0,0,0)",
-        ),
-        xaxis=dict(title="Sample", gridcolor="#1e2d3d", zerolinecolor="#1e2d3d"),
-        yaxis=dict(title="Distance (m)", gridcolor="#1e2d3d", zerolinecolor="#1e2d3d"),
-        yaxis2=dict(title="Micro-Doppler", overlaying='y', side='right', gridcolor="#1e2d3d"),
-        hovermode="x unified",
-    )
-    st.plotly_chart(fig_radar, use_container_width=True)
+    # ── Range vs Doppler scatter (full width) ───────────────────────────
+    if True:
+        # Use recent rows that have objects to reconstruct a point cloud.
+        # radar_log.csv stores per-frame summaries (not per-object XY), so
+        # we plot distance_m as Y and approximate X=0 (radial only) while
+        # colouring by micro_doppler — this gives a range-velocity picture.
+        # Plot ALL recent frames — the sensors are always in view so every
+        # frame has objects. Filtering by presence==1 would always be true.
+        # Colour by micro_doppler so movement stands out against the still
+        # sensor background which clusters near zero on the X axis.
+        recent = radar_df.tail(60).copy()
+
+        DOPPLER_SCALE = 0.15   # ±0.15 m/s colour range (tuned for micro-motion)
+
+        fig_xy = go.Figure()
+
+        # Radar position marker at origin
+        fig_xy.add_trace(go.Scatter(
+            x=[0], y=[0],
+            mode='markers',
+            marker=dict(symbol='triangle-up', size=14, color='#00ff88'),
+            name='Radar',
+            hoverinfo='skip',
+        ))
+
+        if not recent.empty:
+            fig_xy.add_trace(go.Scatter(
+                x=recent["micro_doppler"].values,
+                y=recent["distance_m"].values,
+                mode='markers',
+                marker=dict(
+                    size=10,
+                    color=recent["micro_doppler"].values,
+                    colorscale='RdBu',
+                    cmin=-DOPPLER_SCALE,
+                    cmax=DOPPLER_SCALE,
+                    colorbar=dict(
+                        title=dict(text="Doppler (m/s)", font=dict(color="#c9d1d9")),
+                        tickfont=dict(color="#c9d1d9"),
+                        x=1.02,
+                        thickness=12,
+                    ),
+                    line=dict(width=0.5, color='white'),
+                ),
+                name='All frames',
+                hovertemplate=(
+                    'Range: %{y:.3f} m<br>'
+                    'µ-Doppler: %{x:+.4f} m/s<br>'
+                    '<extra></extra>'
+                ),
+            ))
+
+        fig_xy.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#0a0e17",
+            plot_bgcolor="#0d1117",
+            height=380,
+            margin=dict(l=20, r=60, t=40, b=40),
+            title=dict(
+                text="RADAR — RANGE vs DOPPLER  (recent 60 frames)",
+                font=dict(family="Outfit", size=13, color="#4a5568"), x=0,
+            ),
+            xaxis=dict(
+                title="Doppler velocity (m/s)",
+                gridcolor="#1e2d3d", zerolinecolor="#4a5568",
+                range=[-DOPPLER_SCALE * 2, DOPPLER_SCALE * 2],
+                title_font=dict(size=11, color="#4a5568"),
+            ),
+            yaxis=dict(
+                title="Range (m)",
+                gridcolor="#1e2d3d", zerolinecolor="#1e2d3d",
+                rangemode="tozero",
+                title_font=dict(size=11, color="#4a5568"),
+            ),
+            legend=dict(
+                orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                font=dict(family="JetBrains Mono", size=10, color="#c9d1d9"),
+                bgcolor="rgba(0,0,0,0)",
+            ),
+            hovermode="closest",
+        )
+        st.plotly_chart(fig_xy, use_container_width=True)
 
 except FileNotFoundError:
     st.markdown("""
-    <div style="text-align:center; padding: 40px 0; color: #2d3748; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">
-        radar not connected
-    </div>
+    <div class="alert-clear">No flies detected</div>
     """, unsafe_allow_html=True)
 
 if not st.session_state.paused:
-    time.sleep(2)
+    time.sleep(0.5)
     st.rerun()
