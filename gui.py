@@ -209,6 +209,9 @@ st.markdown("""
     .stSlider label, .stNumberInput label, .stCheckbox label {
         color: #c9d1d9 !important;
     }
+    .stRadio label, .stRadio div[role="radiogroup"] label p {
+        color: #ffffff !important;
+    }
     .stTextInput input, .stNumberInput input {
         color: #c9d1d9 !important;
         background-color: #0d1117 !important;
@@ -302,6 +305,12 @@ if st.session_state.cal_start_time is not None:
         st.success("Calibration complete! Gas + radar models training in background.")
 else:
     st.markdown('<p style="font-family:Outfit,sans-serif;font-size:2rem;font-weight:700;color:#00ff88;margin-bottom:8px;">Calibrate</p>', unsafe_allow_html=True)
+    _produce_choice = st.radio(
+        "Produce type",
+        ["🍌 Banana", "🍅 Tomato"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
     if st.button("Start Calibration", type="primary"):
         st.session_state.cal_start_time = time.time()
         st.session_state.test_result = None
