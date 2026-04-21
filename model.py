@@ -32,7 +32,7 @@ def _load_model():
 _load_model()
 
 
-def predict(mq3, mq135, mq138, mq131, tgs2602):
+def predict(mq3, mq135, mq138, mq131, tgs2602, threshold=0.3):
     """
     Classify a single sensor reading.
     Returns: (label, confidence)
@@ -57,14 +57,13 @@ def predict(mq3, mq135, mq138, mq131, tgs2602):
     proba = _model.predict_proba(X)[0]
     fly_prob = proba[1]
 
-    # Lower threshold (0.3) so borderline VOC spikes still trigger detection
-    label = 1 if fly_prob >= 0.3 else 0
+    label = 1 if fly_prob >= threshold else 0
     confidence = fly_prob if label == 1 else proba[0]
 
     return int(label), float(confidence)
 
 
-def predict_row(row_values):
+def predict_row(row_values, threshold=0.3):
     """
     Classify from a list/array of 5 raw sensor values.
     Convenience wrapper for predict().
@@ -72,10 +71,10 @@ def predict_row(row_values):
     if len(row_values) < 5:
         return 0, 0.0
     return predict(row_values[0], row_values[1], row_values[2],
-                   row_values[3], row_values[4])
+                   row_values[3], row_values[4], threshold=threshold)
 
 
-def predict_batch(df, sensor_cols):
+def predict_batch(df, sensor_cols, threshold=0.3):
     """
     Classify an entire DataFrame in one vectorized call.
     Much faster than calling predict_row() in a loop.
@@ -104,8 +103,8 @@ def predict_batch(df, sensor_cols):
 
     proba       = _model.predict_proba(X)
     fly_probs   = proba[:, 1]
-    labels      = (fly_probs >= 0.3).astype(int).tolist()
-    confidences = np.where(fly_probs >= 0.3, fly_probs, proba[:, 0]).tolist()
+    labels      = (fly_probs >= threshold).astype(int).tolist()
+    confidences = np.where(fly_probs >= threshold, fly_probs, proba[:, 0]).tolist()
 
     return labels, confidences
 

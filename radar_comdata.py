@@ -523,9 +523,16 @@ def main():
             log_file.flush()
 
             # terminal feedback
+            if row['presence'] and abs(row['micro_doppler']) > 0.005:
+                status_str = "MOTION"
+            elif row['presence']:
+                status_str = "STATIC"
+            else:
+                status_str = "clear"
+
             print(f"  {frame['frameNumber']:>7}  "
                   f"{row['num_objects']:>5}  "
-                  f"{'DETECTED' if row['presence'] else 'clear':>10}  "
+                  f"{status_str:>10}  "
                   f"{row['distance_m']:>12.4f}  "
                   f"{row['micro_doppler']:>+10.4f}  "
                   f"{row['peak_velocity']:>9.4f}")

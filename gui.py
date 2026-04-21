@@ -85,25 +85,68 @@ st.markdown("""
 
     .alert-detected {
         background: linear-gradient(135deg, #2d1117 0%, #3b1219 100%);
-        border: 1px solid #f8514966;
+        border: 2px solid #f85149;
         border-radius: 12px;
-        padding: 16px 24px;
+        padding: 20px 24px;
         text-align: center;
         font-family: 'Outfit', sans-serif;
-        font-size: 1.1rem;
+        font-size: 1.4rem;
         color: #ff6b6b;
-        font-weight: 500;
+        font-weight: 700;
     }
     .alert-clear {
         background: linear-gradient(135deg, #0d1f12 0%, #0f2b16 100%);
-        border: 1px solid #00ff8833;
+        border: 2px solid #00ff88;
         border-radius: 12px;
-        padding: 16px 24px;
+        padding: 20px 24px;
         text-align: center;
         font-family: 'Outfit', sans-serif;
-        font-size: 1.1rem;
+        font-size: 1.4rem;
         color: #00ff88;
-        font-weight: 500;
+        font-weight: 700;
+        opacity: 0.9;
+    }
+    .split-alerts {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 20px;
+    }
+    .alert-box {
+        flex: 1;
+        border-radius: 12px;
+        padding: 24px 20px;
+        text-align: center;
+        font-family: 'Outfit', sans-serif;
+        font-size: 1.5rem;
+        font-weight: 700;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 8px;
+    }
+    @keyframes pulse-red {
+        0% { box-shadow: 0 0 0 0 rgba(248, 81, 73, 0.4); }
+        70% { box-shadow: 0 0 0 20px rgba(248, 81, 73, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(248, 81, 73, 0); }
+    }
+    .alert-box.detected {
+        background: linear-gradient(135deg, #2d1117 0%, #3b1219 100%);
+        border: 2px solid #f85149;
+        color: #ff6b6b;
+        animation: pulse-red 1.5s infinite;
+    }
+    .alert-box.clear {
+        background: linear-gradient(135deg, #0d1f12 0%, #0f2b16 100%);
+        border: 2px solid #00ff88;
+        color: #00ff88;
+        opacity: 0.9;
+    }
+    .alert-subtitle {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 1.1rem;
+        font-weight: 400;
+        opacity: 0.9;
     }
 
     .event-tag {
@@ -114,7 +157,7 @@ st.markdown("""
         padding: 4px 12px;
         margin: 4px;
         font-family: 'JetBrains Mono', monospace;
-        font-size: 0.8rem;
+        font-size: 0.9rem;
         color: #ff6b6b;
     }
 
@@ -189,14 +232,22 @@ sensor_info = {
     'TGS2602': {'css': 'tgs2602', 'desc': 'VOCs & Odor'},
 }
 
-st.markdown('<p class="main-title">NO-FLY-ZONE</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">gas sensor array · ml detection pipeline · live</p>', unsafe_allow_html=True)
+colA, colB = st.columns([4, 1])
+with colA:
+    st.markdown('<p class="main-title">NO-FLY-ZONE</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-title">gas sensor array · ml detection pipeline · live</p>', unsafe_allow_html=True)
+with colB:
+    logo_path = BASE_DIR / "assets" / "ics_logo.png"
+    if logo_path.exists():
+        st.image(str(logo_path), width=180)
 st.markdown("<br>", unsafe_allow_html=True)
 
 # --- Sidebar ---
 with st.sidebar:
     st.markdown("### Detection Settings")
     rolling_window = st.slider("Smoothing window", 1, 20, 5)
+    conf_thresh = st.slider("Detection Threshold", 0.1, 0.9, 0.3, 0.05, 
+                            help="Increase to ensure higher accuracy (fewer false alarms). Decrease to detect faster.")
     st.markdown("---")
     live_mode = st.toggle("Live mode", value=True)
 
@@ -272,8 +323,11 @@ if st.session_state.show_test and st.session_state.cal_start_time is None:
                 test_rows = test_df[test_df["Timestamp"] >= test_start_dt]
                 if test_rows.empty:
                     test_rows = test_df.tail(60)
-                labels = [predict_row([row[s] for s in SENSOR_COLUMNS])[0] for _, row in test_rows.iterrows()]
+                preds = [predict_row([row[s] for s in SENSOR_COLUMNS], threshold=conf_thresh) for _, row in test_rows.iterrows()]
+                labels = [p[0] for p in preds]
+                confs = [p[1] for p in preds]
                 fly_count = sum(labels)
+                avg_conf = sum(confs) / len(confs) if confs else 0.0
 
                 # Radar motion check — compare AVERAGE absolute micro-doppler
                 # of the calibration baseline CSV vs the test window. If the
@@ -305,6 +359,7 @@ if st.session_state.show_test and st.session_state.cal_start_time is None:
                 st.session_state.test_result = {
                     "detected":         fly_count > 0,
                     "fly_pct":          round(fly_count / len(labels) * 100, 1),
+                    "avg_conf":         avg_conf,
                     "radar_detected":   bool(radar_detected),
                     "radar_available":  radar_available,
                     "baseline_avg":     round(baseline_avg, 4),
@@ -345,51 +400,47 @@ try:
 except Exception:
     pass
 
+# --- Helper for Dual Banners ---
+def render_dual_banners(voc_det, voc_text, rad_det, rad_text):
+    vc = "detected" if voc_det else "clear"
+    rc = "detected" if rad_det else "clear"
+    st.markdown(f'''
+    <div class="split-alerts">
+        <div class="alert-box {vc}">
+            <div>{"🚨 VOCs INDICATE FLIES 🚨" if voc_det else "✅ VOCs Clear ✅"}</div>
+            <div class="alert-subtitle">{voc_text}</div>
+        </div>
+        <div class="alert-box {rc}">
+            <div>{"🚨 RADAR INDICATES FLIES 🚨" if rad_det else "✅ Radar Clear ✅"}</div>
+            <div class="alert-subtitle">{rad_text}</div>
+        </div>
+    </div><br>
+    ''', unsafe_allow_html=True)
+
 # --- Test result / pre-calibration default ---
 if st.session_state.cal_start_time is not None:
     pass  # silent during calibration — the countdown timer is already shown above
 elif st.session_state.test_result is None:
     # Before the user has hit "Test", use the LIVE radar check as the banner:
-    if live_radar_available and live_radar_motion:
-        st.markdown(
-            f'<div class="alert-detected">MOVEMENT DETECTED (radar) — '
-            f'live µ-doppler {live_test_avg:.3f} m/s vs baseline {live_base_avg:.3f} m/s</div>',
-            unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="alert-clear">No flies detected</div>', unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-
-if st.session_state.test_result is not None:
+    radar_det = live_radar_available and live_radar_motion
+    vt = "Pending formal test..."
+    rt = f"live µ-doppler {live_test_avg:.3f} m/s" if live_radar_available else "Radar offline"
+    render_dual_banners(False, vt, radar_det, rt)
+else:
     r = st.session_state.test_result
     gas_detected    = r["detected"]
-    # Prefer the live radar reading (fresh every refresh) over the snapshot
-    # captured at test time, so the banner flips the instant you wave.
     radar_motion    = live_radar_motion if live_radar_available else r.get("radar_detected", False)
     radar_available = live_radar_available or r.get("radar_available", False)
     base_avg        = live_base_avg if live_radar_available else r.get("baseline_avg", 0.0)
     test_avg        = live_test_avg if live_radar_available else r.get("test_avg", 0.0)
 
-    # Both sensors agree on presence = higher confidence result
-    if gas_detected and radar_motion:
-        st.markdown(
-            f'<div class="alert-detected">FLY ACTIVITY DETECTED — '
-            f'Gas: {r["fly_pct"]}% positive · Radar: live µ-doppler {test_avg:.3f} m/s '
-            f'vs baseline {base_avg:.3f} m/s</div>',
-            unsafe_allow_html=True)
-    elif gas_detected and not radar_motion:
-        st.markdown(
-            f'<div class="alert-detected">FLY ACTIVITY DETECTED (gas sensors) — '
-            f'{r["fly_pct"]}% of samples positive</div>',
-            unsafe_allow_html=True)
-    elif not gas_detected and radar_motion and radar_available:
-        st.markdown(
-            f'<div class="alert-detected">MOVEMENT DETECTED (radar) — '
-            f'live µ-doppler {test_avg:.3f} m/s vs baseline {base_avg:.3f} m/s</div>',
-            unsafe_allow_html=True)
+    if gas_detected:
+        vt = f"AI Certainty: {r['avg_conf']:.1%} sure it's INFECTED ({r['fly_pct']}% of samples)"
     else:
-        st.markdown('<div class="alert-clear">ALL CLEAR — No fly activity detected</div>',
-                    unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
+        vt = f"AI Certainty: {r['avg_conf']:.1%} sure it's CLEAN"
+        
+    rt = f"live µ-doppler {test_avg:.3f} m/s vs baseline {base_avg:.3f}" if radar_available else "Radar offline"
+    render_dual_banners(gas_detected, vt, radar_motion, rt)
 
 # --- Baseline inputs ---
 active_baselines = DEFAULT_BASELINE
@@ -425,8 +476,8 @@ try:
     raw_df = raw_df.tail(DISPLAY_ROWS)
     processed_df = preprocess_data(raw_df, baseline=baseline, window=rolling_window)
 
-    # Batch predict entire DataFrame in one call — much faster than iterrows()
-    labels, confidences = predict_batch(processed_df, SENSOR_COLUMNS)
+    # Batch predict entire DataFrame in one call
+    labels, confidences = predict_batch(processed_df, SENSOR_COLUMNS, threshold=conf_thresh)
 
     processed_df["fly_detected"] = labels
     processed_df["confidence"] = confidences
@@ -508,9 +559,9 @@ if st.session_state.testing:
     if summary['num_events'] > 0:
         avg_conf = summary['avg_confidence']
         events_html = " ".join([f'<span class="event-tag">samples {r[0]}-{r[1]}</span>' for r in summary['detection_regions']])
-        st.markdown(f'<div class="alert-detected">FLY ACTIVITY DETECTED ({avg_conf:.0%} avg confidence) &nbsp;·&nbsp; {events_html}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="alert-detected">🚨 FLY ACTIVITY DETECTED 🚨<br><span style="font-size:1.1rem; opacity:0.9;">({avg_conf:.0%} avg confidence) &nbsp;·&nbsp; {events_html}</span></div>', unsafe_allow_html=True)
     else:
-        st.markdown('<div class="alert-clear">ALL CLEAR — No fly activity detected</div>', unsafe_allow_html=True)
+        st.markdown('<div class="alert-clear">✅ ALL CLEAR — No fly activity detected ✅</div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -602,6 +653,29 @@ fig2.update_layout(
 )
 
 st.plotly_chart(fig2, use_container_width=True)
+
+with st.expander("🧠 Machine Learning Feature Analytics"):
+    st.markdown("""
+    The Random Forest model does not rely on raw gas readings because they drift based on temperature 
+    and humidity. Instead, the preprocessing pipeline computes realtime sensor **ratios** to isolate 
+    the unique volatile organic compound fingerprint associated with fruit flies. 
+    """)
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    last_row = df.iloc[-1]
+    mq3_val = last_row["MQ3_rolling"]
+    r_mq135_mq3 = last_row["MQ135_rolling"] / mq3_val if mq3_val > 0 else 0
+    r_tgs_mq3 = last_row["TGS2602_rolling"] / mq3_val if mq3_val > 0 else 0
+    sensor_sum = sum(last_row[f"{s}_rolling"] for s in SENSOR_COLUMNS)
+    tgs_share = last_row["TGS2602_rolling"] / sensor_sum if sensor_sum > 0 else 0
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric(label="Primary Infestation Marker (MQ135 / MQ3)", value=f"{r_mq135_mq3:.2f}")
+    with c2:
+        st.metric(label="Rot & Odor Profile (TGS2602 / MQ3)", value=f"{r_tgs_mq3:.2f}")
+    with c3:
+        st.metric(label="Total Air Odor Context (TGS Share)", value=f"{tgs_share:.1%}")
 
 with st.expander("View Raw Data Table"):
     st.dataframe(df[SENSOR_COLUMNS], use_container_width=True, height=300)
