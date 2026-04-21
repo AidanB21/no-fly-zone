@@ -9,7 +9,7 @@ import matplotlib.animation as animation
 
 
 # ── Configuration ──────────────────────────────────────────────────
-COM_PORT = "COM5"              # change to match your system (e.g., COM4, /dev/ttyUSB0)
+COM_PORT = "COM4"              # change to match your system (e.g., COM4, /dev/ttyUSB0)
 BAUD_RATE = 9600
 TIMEOUT = 1                    # seconds to wait for a line before giving up
 
